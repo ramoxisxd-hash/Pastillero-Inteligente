@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth_serial_ble/flutter_bluetooth_serial_ble.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'bt_service.dart';
 
 class ConnectionScreen extends StatefulWidget {
@@ -12,7 +12,7 @@ class ConnectionScreen extends StatefulWidget {
 class _ConnectionScreenState extends State<ConnectionScreen> {
   final BtService _bt = BtService.instance;
   bool _loading = false;
-  List<BluetoothDevice> _devices = [];
+  List<ScanResult> _devices = [];
 
   @override
   void initState() {
@@ -22,9 +22,9 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
 
   Future<void> _loadPaired() async {
     setState(() => _loading = true);
-    final devices = await _bt.getPairedDevices();
+    final results = await _bt.scanDevices();
     setState(() {
-      _devices = devices;
+      _devices = results;
       _loading = false;
     });
   }
@@ -37,7 +37,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(ok
-            ? 'Conectado a ${device.name}'
+            ? 'Conectado a ${device.platformName}'
             : 'No se pudo conectar. Verifica que el ESP32 esté encendido'),
         backgroundColor:
             ok ? const Color(0xFF4CAF50) : const Color(0xFFE53935),
@@ -54,7 +54,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   @override
   Widget build(BuildContext context) {
     final connected = _bt.isConnected;
-    final deviceName = _bt.connectedDevice?.name ?? '';
+    final deviceName = _bt.connectedDevice?.platformName ?? '';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -69,8 +69,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         actions: [
           Container(
             margin: const EdgeInsets.only(right: 16),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: connected
                   ? const Color(0xFFE8F5E9)
@@ -162,7 +161,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('DISPOSITIVOS PAREADOS',
+                const Text('DISPOSITIVOS CERCANOS',
                     style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -171,7 +170,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                 TextButton.icon(
                   onPressed: _loading ? null : _loadPaired,
                   icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Actualizar'),
+                  label: const Text('Escanear'),
                   style: TextButton.styleFrom(
                       foregroundColor: const Color(0xFF5B8DEF)),
                 ),
@@ -179,7 +178,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
             ),
             const SizedBox(height: 8),
 
-            // ── Instrucción de pareo ──────────────────
+            // ── Instrucción ───────────────────────────
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -194,7 +193,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Primero paréalo desde Ajustes → Bluetooth del celular. El PIN es 1234. Luego vuelve aquí y tócalo para conectar.',
+                      'Asegúrate de tener el Bluetooth activado y el ESP32 encendido. Toca el dispositivo para conectar.',
                       style: TextStyle(
                           fontSize: 12, color: Color(0xFF4527A0)),
                     ),
@@ -221,13 +220,12 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                       Icon(Icons.bluetooth_disabled,
                           size: 52, color: Colors.grey.shade300),
                       const SizedBox(height: 12),
-                      Text('No hay dispositivos pareados',
+                      Text('No se encontraron dispositivos',
                           style: TextStyle(
                               color: Colors.grey.shade400,
                               fontSize: 14)),
                       const SizedBox(height: 6),
-                      Text(
-                          'Ve a Ajustes → Bluetooth y paréa el ESP32 primero',
+                      Text('Asegúrate de tener el Bluetooth activado',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: Colors.grey.shade400,
@@ -241,22 +239,23 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border:
-                      Border.all(color: const Color(0xFFE0E0E0)),
+                  border: Border.all(color: const Color(0xFFE0E0E0)),
                 ),
                 child: ListView.separated(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: _devices.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1),
+                  separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, index) {
-                    final device = _devices[index];
-                    final name = device.name ?? 'Desconocido';
+                    final result = _devices[index];
+                    final device = result.device;
+                    final name = device.platformName.isNotEmpty
+                        ? device.platformName
+                        : 'Desconocido';
                     final isEsp = name.contains('ESP32') ||
                         name.contains('Pastillero');
                     final isActive =
-                        _bt.connectedDevice?.address == device.address;
+                        _bt.connectedDevice?.remoteId == device.remoteId;
 
                     return ListTile(
                       leading: Icon(
@@ -278,7 +277,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                                 ? const Color(0xFF4CAF82)
                                 : const Color(0xFF1A1A2E),
                           )),
-                      subtitle: Text(device.address,
+                      subtitle: Text(device.remoteId.toString(),
                           style: const TextStyle(
                               fontSize: 11,
                               color: Color(0xFF888888))),

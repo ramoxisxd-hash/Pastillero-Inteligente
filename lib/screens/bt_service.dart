@@ -1,36 +1,49 @@
 import 'dart:convert';
-import 'dart:typed_data';
-import 'package:flutter_bluetooth_serial_ble/flutter_bluetooth_serial_ble.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+
 
 class BtService {
   BtService._();
   static final BtService instance = BtService._();
 
-  BluetoothConnection? _connection;
   BluetoothDevice? _connectedDevice;
-  String _buffer = '';
+  BluetoothCharacteristic? _txCharacteristic;
+  BluetoothCharacteristic? _rxCharacteristic;
+  bool _isConnected = false;
 
-  bool get isConnected =>
-      _connection != null && (_connection?.isConnected ?? false);
+  // UUIDs del servicio BLE (deben coincidir con el ESP32)
+  static const String serviceUUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+  static const String rxUUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+  static const String txUUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+
+  bool get isConnected => _isConnected;
   BluetoothDevice? get connectedDevice => _connectedDevice;
 
-  Future<List<BluetoothDevice>> getPairedDevices() async {
-    try {
-      final devices =
-          await FlutterBluetoothSerial.instance.getBondedDevices();
-      return devices;
-    } catch (e) {
-      print('Error obteniendo pareados: $e');
-      return [];
+  Future<List<ScanResult>> scanDevices() async {
+    List<ScanResult> results = [];
+    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
+    await for (final r in FlutterBluePlus.scanResults) {
+      results = r;
     }
+    return results;
   }
 
   Future<bool> connect(BluetoothDevice device) async {
     try {
-      final conn = await BluetoothConnection.toAddress(device.address);
-      _connection = conn;
+      await device.connect(license: License.commercial);
       _connectedDevice = device;
-      _buffer = '';
+
+      final services = await device.discoverServices();
+      for (final s in services) {
+        if (s.uuid.toString().toUpperCase() == serviceUUID) {
+          for (final c in s.characteristics) {
+            final uuid = c.uuid.toString().toUpperCase();
+            if (uuid == rxUUID) _rxCharacteristic = c;
+            if (uuid == txUUID) _txCharacteristic = c;
+          }
+        }
+      }
+      _isConnected = true;
       return true;
     } catch (e) {
       print('Error conectando: $e');
@@ -40,31 +53,28 @@ class BtService {
 
   Future<void> disconnect() async {
     try {
-      await _connection?.close();
+      await _connectedDevice?.disconnect();
     } catch (_) {}
-    _connection = null;
     _connectedDevice = null;
-    _buffer = '';
+    _txCharacteristic = null;
+    _rxCharacteristic = null;
+    _isConnected = false;
   }
 
   Future<String?> sendCommand(String command) async {
-    if (!isConnected) return null;
+    if (!_isConnected || _rxCharacteristic == null) return null;
     try {
-      _connection!.output
-          .add(Uint8List.fromList(utf8.encode('$command\n')));
-      await _connection!.output.allSent;
+      await _rxCharacteristic!.write(
+        utf8.encode('$command\n'),
+        withoutResponse: false,
+      );
 
-      final deadline = DateTime.now().add(const Duration(seconds: 5));
-      _buffer = '';
-
-      await for (final data in _connection!.input!) {
-        _buffer += utf8.decode(data);
-        if (_buffer.contains('\n')) {
-          final line = _buffer.split('\n').first.trim();
-          _buffer = '';
-          return line;
-        }
-        if (DateTime.now().isAfter(deadline)) break;
+      if (_txCharacteristic != null) {
+        await _txCharacteristic!.setNotifyValue(true);
+        final data = await _txCharacteristic!.lastValueStream
+            .timeout(const Duration(seconds: 5))
+            .first;
+        return utf8.decode(data).trim();
       }
       return null;
     } catch (e) {
